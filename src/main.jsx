@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import ReactDOM from "react-dom/client";
 
 const AGENTS = [
@@ -10,23 +10,13 @@ const AGENTS = [
 ];
 
 function App() {
-  const host = typeof window !== "undefined" ? window.location.host : "";
-
-  // Gate state
-  const [session, setSession] = useState({ loading: true, authenticated: false, email: null });
-  const [loginEmail, setLoginEmail] = useState("mario_palermo97@live.it");
-  const [loginPassword, setLoginPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [loginBusy, setLoginBusy] = useState(false);
-
-  // Chat UI state
   const [activeAgentId, setActiveAgentId] = useState(AGENTS[0].id);
   const [draft, setDraft] = useState("");
   const [messagesByAgent, setMessagesByAgent] = useState(() => {
     const init = {};
     for (const a of AGENTS) init[a.id] = [];
     init[AGENTS[0].id] = [
-      { role: "assistant", text: "Ciao! UI online ✅ Dimmi cosa vuoi costruire ora." },
+      { role: "assistant", text: "Ciao! Access OK ✅ Dimmi cosa vuoi costruire ora." },
     ];
     return init;
   });
@@ -45,47 +35,6 @@ function App() {
     }));
   }
 
-  async function loadSession() {
-    try {
-      const res = await fetch("/api/session", { credentials: "include" });
-      const data = await res.json();
-      setSession({
-        loading: false,
-        authenticated: !!data.authenticated,
-        email: data.email ?? null,
-      });
-    } catch {
-      setSession({ loading: false, authenticated: false, email: null });
-    }
-  }
-
-  useEffect(() => {
-    loadSession();
-  }, []);
-
-  async function onLogin() {
-    setLoginError("");
-    setLoginBusy(true);
-    try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || !data.ok) {
-        setLoginError(data.error || "Login failed");
-        return;
-      }
-
-      await loadSession();
-    } finally {
-      setLoginBusy(false);
-    }
-  }
-
   async function onSend() {
     const text = draft.trim();
     if (!text) return;
@@ -93,89 +42,21 @@ function App() {
     setDraft("");
     pushMessage(activeAgentId, { role: "user", text });
 
-    // placeholder: fino a quando non colleghiamo la chat API
+    // TODO: qui collegheremo l’API reale (Worker/FastAPI)
     setTimeout(() => {
       pushMessage(activeAgentId, {
         role: "assistant",
         text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API.`,
       });
-    }, 250);
+    }, 300);
   }
 
-  // ====== GATE SCREEN ======
-  if (session.loading) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.cardCenter}>Loading…</div>
-      </div>
-    );
-  }
-
-  if (!session.authenticated) {
-    return (
-      <div style={styles.page}>
-        <div style={styles.cardCenter}>
-          <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: -0.2 }}>FarmaAI UI</div>
-          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.7 }}>
-            Cloudflare Pages • {host || "—"}
-          </div>
-
-          <div style={{ marginTop: 16 }}>
-            <div style={styles.label}>Email</div>
-            <input
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              style={styles.input}
-              placeholder="email"
-              autoComplete="username"
-            />
-
-            <div style={{ ...styles.label, marginTop: 10 }}>Password</div>
-            <input
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              style={styles.input}
-              placeholder="password"
-              type="password"
-              autoComplete="current-password"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onLogin();
-              }}
-            />
-
-            {loginError ? (
-              <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700 }}>
-                {loginError}
-              </div>
-            ) : null}
-
-            <button
-              onClick={onLogin}
-              style={{ ...styles.sendBtn, marginTop: 14, width: "100%", opacity: loginBusy ? 0.7 : 1 }}
-              disabled={loginBusy}
-            >
-              {loginBusy ? "Logging in…" : "Login"}
-            </button>
-
-            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.6 }}>
-              (Server: <code>/functions/api/login.js</code> + <code>/functions/api/session.js</code>)
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ====== APP UI ======
   return (
     <div style={styles.page}>
       <div style={styles.header}>
         <div>
           <div style={styles.title}>FarmaAI UI</div>
-          <div style={styles.subtitle}>
-            Cloudflare Pages • {host || "—"} • <span style={{ fontWeight: 800 }}>User:</span>{" "}
-            {session.email || "—"}
-          </div>
+          <div style={styles.subtitle}>Cloudflare Pages • {window.location.host}</div>
         </div>
         <div style={styles.badge}>Online</div>
       </div>
@@ -206,7 +87,7 @@ function App() {
         <main style={styles.main}>
           <div style={styles.chatHeader}>
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
-            <div style={styles.chatHeaderHint}>placeholder UI (next: API)</div>
+            <div style={styles.chatHeaderHint}>UI pronta (next: API)</div>
           </div>
 
           <div style={styles.chat}>
@@ -256,8 +137,6 @@ const styles = {
     padding: 24,
     background: "#fff",
     color: "#111",
-    minHeight: "100vh",
-    boxSizing: "border-box",
   },
   header: {
     display: "flex",
@@ -337,7 +216,7 @@ const styles = {
   msgUser: { alignSelf: "flex-end", background: "#f9fafb" },
   msgAssistant: { alignSelf: "flex-start", background: "#fff" },
   msgRole: { fontSize: 11, fontWeight: 900, opacity: 0.55, marginBottom: 6 },
-  msgText: { fontSize: 14, lineHeight: 1.35, whiteSpace: "pre-wrap" },
+  msgText: { fontSize: 14, lineHeight: 1.35 },
   composer: {
     borderTop: "1px solid #e5e7eb",
     padding: 12,
@@ -352,7 +231,6 @@ const styles = {
     padding: "10px 12px",
     fontSize: 14,
     outline: "none",
-    boxSizing: "border-box",
   },
   sendBtn: {
     borderRadius: 12,
@@ -363,15 +241,7 @@ const styles = {
     fontWeight: 800,
     cursor: "pointer",
   },
-  cardCenter: {
-    maxWidth: 520,
-    margin: "10vh auto",
-    border: "1px solid #e5e7eb",
-    borderRadius: 16,
-    padding: 18,
-    background: "#fff",
-  },
-  label: { fontSize: 12, fontWeight: 800, opacity: 0.8, marginBottom: 6 },
 };
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
