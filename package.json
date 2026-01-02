@@ -2,7 +2,18 @@
   "name": "farmai-farmagents-ui",
   "private": true,
   "version": "0.0.1",
+  "type": "module",
   "scripts": {
-    "build": "node -e \"const fs=require('fs'); fs.mkdirSync('dist',{recursive:true}); fs.writeFileSync('dist/index.html','<!doctype html><html><body><h1>FarmaAI UI</h1><p>Deployed.</p></body></html>');\""
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.0"
   }
 }
