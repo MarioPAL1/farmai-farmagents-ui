@@ -1,3 +1,8 @@
-"scripts": {
-  "build": "mkdir -p dist && echo '<!doctype html><html><body><h1>FarmaAI UI</h1><p>Deployed.</p></body></html>' > dist/index.html"
+{
+  "name": "farmai-farmagents-ui",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "build": "mkdir -p dist && printf '%s' \"<!doctype html><html><body><h1>FarmaAI UI</h1><p>Deployed.</p></body></html>\" > dist/index.html"
+  }
 }
