@@ -30,6 +30,10 @@ function App() {
   const [projectsError, setProjectsError] = useState("");
   const [connected, setConnected] = useState(null); // null=checking, false=no, true=yes
 
+  // Create project UI
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+
   const activeAgent = useMemo(
     () => AGENTS.find((a) => a.id === activeAgentId),
     [activeAgentId]
@@ -97,6 +101,35 @@ function App() {
     }
   }
 
+  async function createProject() {
+    const name = newProjectName.trim();
+    if (!name) return;
+
+    setCreatingProject(true);
+    setProjectsError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/kb/projects/create`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`CREATE ${res.status}: ${txt}`);
+      }
+
+      setNewProjectName("");
+      await loadProjects();
+    } catch (e) {
+      setProjectsError(e?.message || String(e));
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
   useEffect(() => {
     loadProjects();
   }, []);
@@ -155,6 +188,23 @@ function App() {
             <div style={styles.sidebarTitle}>Projects</div>
             <button onClick={loadProjects} style={styles.smallBtn} disabled={projectsLoading}>
               {projectsLoading ? "…" : "↻"}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="Nuovo progetto…"
+              style={{ ...styles.input, padding: "8px 10px", fontSize: 13 }}
+            />
+            <button
+              onClick={createProject}
+              style={styles.smallBtn}
+              disabled={creatingProject || !newProjectName.trim()}
+              title="Crea progetto"
+            >
+              {creatingProject ? "…" : "+"}
             </button>
           </div>
 
@@ -289,6 +339,7 @@ const styles = {
     padding: "6px 10px",
     cursor: "pointer",
     fontWeight: 900,
+    whiteSpace: "nowrap",
   },
   divider: { height: 1, background: "#e5e7eb", margin: "6px 0" },
   agentList: { display: "flex", flexDirection: "column", gap: 8 },
@@ -369,6 +420,7 @@ const styles = {
     padding: "10px 12px",
     fontSize: 14,
     outline: "none",
+    minWidth: 0,
   },
   sendBtn: {
     borderRadius: 12,
