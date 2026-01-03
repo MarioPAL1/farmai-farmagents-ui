@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 
-const AGENTS = [
+const DEFAULT_AGENTS = [
   { id: "orchestrator", name: "Orchestrator" },
   { id: "pm", name: "PM / Planner" },
   { id: "dev", name: "Developer" },
@@ -12,13 +12,18 @@ const AGENTS = [
 const API_BASE = "https://api.farmai-farmagents.it";
 
 function App() {
-  const [activeAgentId, setActiveAgentId] = useState(AGENTS[0].id);
+  // Agents (loaded from OneDrive via API)
+  const [agents, setAgents] = useState(DEFAULT_AGENTS);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentsError, setAgentsError] = useState("");
+
+  const [activeAgentId, setActiveAgentId] = useState(DEFAULT_AGENTS[0].id);
   const [draft, setDraft] = useState("");
 
   const [messagesByAgent, setMessagesByAgent] = useState(() => {
     const init = {};
-    for (const a of AGENTS) init[a.id] = [];
-    init[AGENTS[0].id] = [
+    for (const a of DEFAULT_AGENTS) init[a.id] = [];
+    init[DEFAULT_AGENTS[0].id] = [
       { role: "assistant", text: "Ciao! Access OK ✅ Dimmi cosa vuoi costruire ora." },
     ];
     return init;
@@ -41,8 +46,8 @@ function App() {
   const [deletingProjectId, setDeletingProjectId] = useState(null);
 
   const activeAgent = useMemo(
-    () => AGENTS.find((a) => a.id === activeAgentId),
-    [activeAgentId]
+    () => agents.find((a) => a.id === activeAgentId) || agents[0],
+    [agents, activeAgentId]
   );
 
   const activeMessages = messagesByAgent[activeAgentId] ?? [];
@@ -57,6 +62,52 @@ function App() {
   function connectOneDrive() {
     const returnTo = window.location.origin;
     window.location.href = `${API_BASE}/auth/start?returnTo=${encodeURIComponent(returnTo)}`;
+  }
+
+  async function loadAgents() {
+    setAgentsLoading(true);
+    setAgentsError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/agents`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`AGENTS ${res.status}: ${txt}`);
+      }
+
+      const data = await res.json();
+      const list = (data?.agents || [])
+        .map((a) => ({ id: a.id, name: a.name }))
+        .filter((a) => a.id && a.name);
+
+      if (list.length > 0) {
+        setAgents(list);
+
+        // ensure activeAgentId is valid
+        setActiveAgentId((prev) => (list.some((x) => x.id === prev) ? prev : list[0].id));
+
+        // ensure messages buckets exist
+        setMessagesByAgent((prev) => {
+          const next = { ...prev };
+          for (const a of list) {
+            if (!next[a.id]) next[a.id] = [];
+          }
+          return next;
+        });
+      } else {
+        // keep defaults if folder empty
+        setAgents(DEFAULT_AGENTS);
+      }
+    } catch (e) {
+      setAgentsError(e?.message || String(e));
+      setAgents(DEFAULT_AGENTS);
+    } finally {
+      setAgentsLoading(false);
+    }
   }
 
   async function loadProjects() {
@@ -101,10 +152,6 @@ function App() {
       const list = data?.index?.projects ?? [];
       setProjects(list);
 
-      // Se non c'è un activeProjectId, imposta il primo
-      setActiveProjectId((prev) => prev ?? (list[0]?.id ?? null));
-
-      // Se l'activeProjectId non esiste più (es. dopo delete), ripiega sul primo
       setActiveProjectId((prev) => {
         if (!prev) return list[0]?.id ?? null;
         const exists = list.some((p) => p.id === prev);
@@ -171,7 +218,6 @@ function App() {
         throw new Error(`DELETE ${res.status}: ${txt}`);
       }
 
-      // reload list + fix activeProjectId
       await loadProjects();
     } catch (e) {
       setProjectsError(e?.message || String(e));
@@ -181,7 +227,9 @@ function App() {
   }
 
   useEffect(() => {
+    loadAgents();
     loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function onSend() {
@@ -191,10 +239,11 @@ function App() {
     setDraft("");
     pushMessage(activeAgentId, { role: "user", text });
 
+    // Placeholder: in futuro collegheremo chat → orchestrator API
     setTimeout(() => {
       pushMessage(activeAgentId, {
         role: "assistant",
-        text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API (sul progetto: ${activeProjectId || "—"}).`,
+        text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API (progetto: ${activeProjectId || "—"}).`,
       });
     }, 250);
   }
@@ -211,9 +260,22 @@ function App() {
 
       <div style={styles.body}>
         <aside style={styles.sidebar}>
-          <div style={styles.sidebarTitle}>Agents</div>
+          <div style={styles.sidebarTitleRow}>
+            <div style={styles.sidebarTitle}>Agents</div>
+            <button onClick={loadAgents} style={styles.smallBtn} disabled={agentsLoading}>
+              {agentsLoading ? "…" : "↻"}
+            </button>
+          </div>
+
+          {agentsError ? (
+            <div style={styles.errorBox}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore Agents</div>
+              <div style={{ fontSize: 12, opacity: 0.85 }}>{agentsError}</div>
+            </div>
+          ) : null}
+
           <div style={styles.agentList}>
-            {AGENTS.map((a) => {
+            {agents.map((a) => {
               const isActive = a.id === activeAgentId;
               return (
                 <button
@@ -269,7 +331,7 @@ function App() {
             </div>
           ) : projectsError ? (
             <div style={styles.errorBox}>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore</div>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore Projects</div>
               <div style={{ fontSize: 12, opacity: 0.85 }}>{projectsError}</div>
             </div>
           ) : projectsLoading || connected === null ? (
@@ -283,13 +345,12 @@ function App() {
                 const isDeleting = deletingProjectId === p.id;
 
                 return (
-                  <button
+                  <div
                     key={p.id}
                     onClick={() => setActiveProjectId(p.id)}
                     style={{
                       ...styles.projectItem,
                       cursor: "pointer",
-                      textAlign: "left",
                       display: "flex",
                       alignItems: "flex-start",
                       justifyContent: "space-between",
@@ -320,7 +381,7 @@ function App() {
                     >
                       {isDeleting ? "…" : "🗑"}
                     </button>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -330,7 +391,9 @@ function App() {
         <main style={styles.main}>
           <div style={styles.chatHeader}>
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
-            <div style={styles.chatHeaderHint}>Project: {activeProjectId || "—"} • UI pronta (next: API)</div>
+            <div style={styles.chatHeaderHint}>
+              Project: {activeProjectId || "—"} • UI pronta (next: API)
+            </div>
           </div>
 
           <div style={styles.chat}>
