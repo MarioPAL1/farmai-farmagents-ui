@@ -28,6 +28,7 @@ function App() {
   const [projects, setProjects] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState("");
+  const [connected, setConnected] = useState(null); // null=checking, false=no, true=yes
 
   const activeAgent = useMemo(
     () => AGENTS.find((a) => a.id === activeAgentId),
@@ -43,10 +44,38 @@ function App() {
     }));
   }
 
+  function connectOneDrive() {
+    const returnTo = window.location.origin;
+    window.location.href = `${API_BASE}/auth/start?returnTo=${encodeURIComponent(returnTo)}`;
+  }
+
   async function loadProjects() {
     setProjectsLoading(true);
     setProjectsError("");
+
     try {
+      // 1) Auth status
+      const s = await fetch(`${API_BASE}/auth/status`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!s.ok) {
+        const txt = await s.text();
+        throw new Error(`AUTH STATUS ${s.status}: ${txt}`);
+      }
+
+      const sj = await s.json();
+
+      if (!sj.connected) {
+        setConnected(false);
+        setProjects([]);
+        return;
+      }
+
+      setConnected(true);
+
+      // 2) Projects index
       const res = await fetch(`${API_BASE}/kb/projects/index`, {
         method: "GET",
         credentials: "include",
@@ -129,15 +158,22 @@ function App() {
             </button>
           </div>
 
-          {projectsError ? (
+          {connected === false ? (
+            <div style={styles.errorBox}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Non connesso</div>
+              <div style={{ fontSize: 12, opacity: 0.85 }}>
+                Connetti OneDrive per caricare i progetti.
+              </div>
+              <button onClick={connectOneDrive} style={{ ...styles.smallBtn, marginTop: 10 }}>
+                Connect OneDrive
+              </button>
+            </div>
+          ) : projectsError ? (
             <div style={styles.errorBox}>
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore</div>
               <div style={{ fontSize: 12, opacity: 0.85 }}>{projectsError}</div>
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-                Tip: se non sei “connesso”, apri prima /auth/start sul dominio API.
-              </div>
             </div>
-          ) : projectsLoading ? (
+          ) : projectsLoading || connected === null ? (
             <div style={styles.muted}>Caricamento…</div>
           ) : projects.length === 0 ? (
             <div style={styles.muted}>Nessun progetto.</div>
