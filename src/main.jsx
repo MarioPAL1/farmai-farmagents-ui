@@ -11,6 +11,18 @@ const DEFAULT_AGENTS = [
 
 const API_BASE = "https://api.farmai-farmagents.it";
 
+function parseAgentProfile(content) {
+  const text = String(content || "");
+  const lines = text.split(/\r?\n/);
+  const nameLine = lines.find((l) => /^\s*Name\s*:/i.test(l)) || "";
+  const roleLine = lines.find((l) => /^\s*Role\s*:/i.test(l)) || "";
+
+  const name = nameLine.split(":").slice(1).join(":").trim() || null;
+  const role = roleLine.split(":").slice(1).join(":").trim() || null;
+
+  return { name, role };
+}
+
 function App() {
   // Agents (loaded from OneDrive via API)
   const [agents, setAgents] = useState(DEFAULT_AGENTS);
@@ -28,6 +40,11 @@ function App() {
     ];
     return init;
   });
+
+  // Active agent profile
+  const [agentProfileLoading, setAgentProfileLoading] = useState(false);
+  const [agentProfileError, setAgentProfileError] = useState("");
+  const [agentProfile, setAgentProfile] = useState(null); // { agent, content, parsed }
 
   // Projects
   const [projects, setProjects] = useState([]);
@@ -99,7 +116,6 @@ function App() {
           return next;
         });
       } else {
-        // keep defaults if folder empty
         setAgents(DEFAULT_AGENTS);
       }
     } catch (e) {
@@ -107,6 +123,40 @@ function App() {
       setAgents(DEFAULT_AGENTS);
     } finally {
       setAgentsLoading(false);
+    }
+  }
+
+  async function loadAgentProfile(agentId) {
+    if (!agentId) return;
+
+    setAgentProfileLoading(true);
+    setAgentProfileError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`PROFILE ${res.status}: ${txt}`);
+      }
+
+      const data = await res.json();
+      const content = data?.content || "";
+      const parsed = parseAgentProfile(content);
+
+      setAgentProfile({
+        agent: data?.agent || { id: agentId, name: agentId },
+        content,
+        parsed,
+      });
+    } catch (e) {
+      setAgentProfile(null);
+      setAgentProfileError(e?.message || String(e));
+    } finally {
+      setAgentProfileLoading(false);
     }
   }
 
@@ -232,6 +282,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    loadAgentProfile(activeAgentId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgentId]);
+
   async function onSend() {
     const text = draft.trim();
     if (!text) return;
@@ -247,6 +302,9 @@ function App() {
       });
     }, 250);
   }
+
+  const agentProfileName = agentProfile?.parsed?.name || agentProfile?.agent?.name || activeAgent?.name || "—";
+  const agentProfileRole = agentProfile?.parsed?.role || "—";
 
   return (
     <div style={styles.page}>
@@ -296,6 +354,48 @@ function App() {
           <div style={styles.divider} />
 
           <div style={styles.sidebarTitleRow}>
+            <div style={styles.sidebarTitle}>Agent Profile</div>
+            <button
+              onClick={() => loadAgentProfile(activeAgentId)}
+              style={styles.smallBtn}
+              disabled={agentProfileLoading || !activeAgentId}
+              title="Ricarica profilo agente"
+            >
+              {agentProfileLoading ? "…" : "↻"}
+            </button>
+          </div>
+
+          {agentProfileError ? (
+            <div style={styles.errorBox}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore Profile</div>
+              <div style={{ fontSize: 12, opacity: 0.85 }}>{agentProfileError}</div>
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+                Tip: se non sei connesso, premi “Connect OneDrive”.
+              </div>
+            </div>
+          ) : agentProfileLoading ? (
+            <div style={styles.muted}>Caricamento profilo…</div>
+          ) : agentProfile ? (
+            <div style={styles.profileBox}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontWeight: 900, fontSize: 13 }}>{agentProfileName}</div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>{agentProfileRole}</div>
+                {agentProfile?.agent?.lastModifiedDateTime ? (
+                  <div style={{ fontSize: 11, opacity: 0.55, marginTop: 2 }}>
+                    Updated: {agentProfile.agent.lastModifiedDateTime}
+                  </div>
+                ) : null}
+              </div>
+
+              <pre style={styles.profilePre}>{agentProfile.content}</pre>
+            </div>
+          ) : (
+            <div style={styles.muted}>Nessun profilo.</div>
+          )}
+
+          <div style={styles.divider} />
+
+          <div style={styles.sidebarTitleRow}>
             <div style={styles.sidebarTitle}>Projects</div>
             <button onClick={loadProjects} style={styles.smallBtn} disabled={projectsLoading}>
               {projectsLoading ? "…" : "↻"}
@@ -323,7 +423,7 @@ function App() {
             <div style={styles.errorBox}>
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Non connesso</div>
               <div style={{ fontSize: 12, opacity: 0.85 }}>
-                Connetti OneDrive per caricare i progetti.
+                Connetti OneDrive per caricare agenti e progetti.
               </div>
               <button onClick={connectOneDrive} style={{ ...styles.smallBtn, marginTop: 10 }}>
                 Connect OneDrive
@@ -392,7 +492,7 @@ function App() {
           <div style={styles.chatHeader}>
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
             <div style={styles.chatHeaderHint}>
-              Project: {activeProjectId || "—"} • UI pronta (next: API)
+              Project: {activeProjectId || "—"} • Role: {agentProfileRole}
             </div>
           </div>
 
@@ -462,7 +562,7 @@ const styles = {
   },
   body: {
     display: "grid",
-    gridTemplateColumns: "280px 1fr",
+    gridTemplateColumns: "320px 1fr",
     gap: 16,
     alignItems: "stretch",
     minHeight: "70vh",
@@ -475,6 +575,7 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     gap: 10,
+    overflow: "auto",
   },
   sidebarTitle: { fontWeight: 800, fontSize: 14 },
   sidebarTitleRow: {
@@ -507,6 +608,28 @@ const styles = {
     boxShadow: "0 1px 0 rgba(0,0,0,0.06)",
   },
   agentHint: { fontSize: 12, opacity: 0.65, marginTop: 2 },
+  profileBox: {
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    borderRadius: 12,
+    padding: 10,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  profilePre: {
+    margin: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    fontSize: 12,
+    lineHeight: 1.35,
+    border: "1px solid #e5e7eb",
+    borderRadius: 10,
+    padding: 10,
+    background: "#fafafa",
+    maxHeight: 220,
+    overflow: "auto",
+  },
   projectsList: { display: "flex", flexDirection: "column", gap: 8 },
   projectItem: {
     border: "1px solid #e5e7eb",
@@ -545,6 +668,7 @@ const styles = {
     gap: 10,
     background: "#fff",
     flex: 1,
+    overflow: "auto",
   },
   empty: { opacity: 0.6, fontSize: 13 },
   msg: {
@@ -589,3 +713,4 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
+
