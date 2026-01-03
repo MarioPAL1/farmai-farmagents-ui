@@ -30,9 +30,15 @@ function App() {
   const [projectsError, setProjectsError] = useState("");
   const [connected, setConnected] = useState(null); // null=checking, false=no, true=yes
 
+  // Active project
+  const [activeProjectId, setActiveProjectId] = useState(null);
+
   // Create project UI
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
+
+  // Delete project UI
+  const [deletingProjectId, setDeletingProjectId] = useState(null);
 
   const activeAgent = useMemo(
     () => AGENTS.find((a) => a.id === activeAgentId),
@@ -74,6 +80,7 @@ function App() {
       if (!sj.connected) {
         setConnected(false);
         setProjects([]);
+        setActiveProjectId(null);
         return;
       }
 
@@ -93,6 +100,16 @@ function App() {
       const data = await res.json();
       const list = data?.index?.projects ?? [];
       setProjects(list);
+
+      // Se non c'è un activeProjectId, imposta il primo
+      setActiveProjectId((prev) => prev ?? (list[0]?.id ?? null));
+
+      // Se l'activeProjectId non esiste più (es. dopo delete), ripiega sul primo
+      setActiveProjectId((prev) => {
+        if (!prev) return list[0]?.id ?? null;
+        const exists = list.some((p) => p.id === prev);
+        return exists ? prev : (list[0]?.id ?? null);
+      });
     } catch (e) {
       setProjectsError(e?.message || String(e));
       setProjects([]);
@@ -130,6 +147,39 @@ function App() {
     }
   }
 
+  async function deleteProject(project) {
+    if (!project?.id) return;
+
+    const ok = window.confirm(
+      `Eliminare il progetto "${project.name}"?\n\nQuesta azione rimuoverà il progetto dall'indice (e se l'API è implementata così, anche la cartella).`
+    );
+    if (!ok) return;
+
+    setDeletingProjectId(project.id);
+    setProjectsError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/kb/projects/delete`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: project.id }),
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`DELETE ${res.status}: ${txt}`);
+      }
+
+      // reload list + fix activeProjectId
+      await loadProjects();
+    } catch (e) {
+      setProjectsError(e?.message || String(e));
+    } finally {
+      setDeletingProjectId(null);
+    }
+  }
+
   useEffect(() => {
     loadProjects();
   }, []);
@@ -141,11 +191,10 @@ function App() {
     setDraft("");
     pushMessage(activeAgentId, { role: "user", text });
 
-    // Placeholder: in futuro collegheremo chat → orchestrator API
     setTimeout(() => {
       pushMessage(activeAgentId, {
         role: "assistant",
-        text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API.`,
+        text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API (sul progetto: ${activeProjectId || "—"}).`,
       });
     }, 250);
   }
@@ -229,12 +278,51 @@ function App() {
             <div style={styles.muted}>Nessun progetto.</div>
           ) : (
             <div style={styles.projectsList}>
-              {projects.map((p) => (
-                <div key={p.id} style={styles.projectItem}>
-                  <div style={{ fontWeight: 800, fontSize: 13 }}>{p.name}</div>
-                  <div style={styles.projectMeta}>{p.id}</div>
-                </div>
-              ))}
+              {projects.map((p) => {
+                const isActive = p.id === activeProjectId;
+                const isDeleting = deletingProjectId === p.id;
+
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setActiveProjectId(p.id)}
+                    style={{
+                      ...styles.projectItem,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      ...(isActive ? { border: "1px solid #111" } : null),
+                    }}
+                    title="Seleziona progetto"
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13 }}>{p.name}</div>
+                      <div style={styles.projectMeta}>{p.id}</div>
+                    </div>
+
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteProject(p);
+                      }}
+                      style={{
+                        ...styles.smallBtn,
+                        padding: "6px 8px",
+                        fontWeight: 900,
+                        opacity: isDeleting ? 0.6 : 1,
+                      }}
+                      disabled={isDeleting}
+                      title="Elimina progetto"
+                    >
+                      {isDeleting ? "…" : "🗑"}
+                    </button>
+                  </button>
+                );
+              })}
             </div>
           )}
         </aside>
@@ -242,7 +330,7 @@ function App() {
         <main style={styles.main}>
           <div style={styles.chatHeader}>
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
-            <div style={styles.chatHeaderHint}>UI pronta (next: API)</div>
+            <div style={styles.chatHeaderHint}>Project: {activeProjectId || "—"} • UI pronta (next: API)</div>
           </div>
 
           <div style={styles.chat}>
