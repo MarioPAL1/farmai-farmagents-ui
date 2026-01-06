@@ -23,6 +23,17 @@ function parseAgentProfile(content) {
   return { name, role };
 }
 
+function toUiMessages(entries, agentId) {
+  const list = Array.isArray(entries) ? entries : [];
+  return list
+    .filter((e) => String(e?.agentId || "") === String(agentId || ""))
+    .map((e) => ({
+      role: String(e?.role || "assistant"),
+      text: String(e?.text || ""),
+      ts: e?.ts || null,
+    }));
+}
+
 function App() {
   // Agents (loaded from OneDrive via API)
   const [agents, setAgents] = useState(DEFAULT_AGENTS);
@@ -31,15 +42,6 @@ function App() {
 
   const [activeAgentId, setActiveAgentId] = useState(DEFAULT_AGENTS[0].id);
   const [draft, setDraft] = useState("");
-
-  const [messagesByAgent, setMessagesByAgent] = useState(() => {
-    const init = {};
-    for (const a of DEFAULT_AGENTS) init[a.id] = [];
-    init[DEFAULT_AGENTS[0].id] = [
-      { role: "assistant", text: "Ciao! Access OK ✅ Dimmi cosa vuoi costruire ora." },
-    ];
-    return init;
-  });
 
   // Active agent profile
   const [agentProfileLoading, setAgentProfileLoading] = useState(false);
@@ -62,19 +64,23 @@ function App() {
   // Delete project UI
   const [deletingProjectId, setDeletingProjectId] = useState(null);
 
+  // Project chat (persisted on OneDrive via API)
+  const [chatEntries, setChatEntries] = useState([]); // all messages for project (all agents)
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
+
   const activeAgent = useMemo(
     () => agents.find((a) => a.id === activeAgentId) || agents[0],
     [agents, activeAgentId]
   );
 
-  const activeMessages = messagesByAgent[activeAgentId] ?? [];
+  const activeMessages = useMemo(() => {
+    const msgs = toUiMessages(chatEntries, activeAgentId);
+    if (msgs.length > 0) return msgs;
 
-  function pushMessage(agentId, msg) {
-    setMessagesByAgent((prev) => ({
-      ...prev,
-      [agentId]: [...(prev[agentId] ?? []), msg],
-    }));
-  }
+    // Friendly default message per agent when chat is empty for that agent
+    return [{ role: "assistant", text: "Ciao! Access OK ✅ Dimmi cosa vuoi costruire ora." }];
+  }, [chatEntries, activeAgentId]);
 
   function connectOneDrive() {
     const returnTo = window.location.origin;
@@ -103,18 +109,7 @@ function App() {
 
       if (list.length > 0) {
         setAgents(list);
-
-        // ensure activeAgentId is valid
         setActiveAgentId((prev) => (list.some((x) => x.id === prev) ? prev : list[0].id));
-
-        // ensure messages buckets exist
-        setMessagesByAgent((prev) => {
-          const next = { ...prev };
-          for (const a of list) {
-            if (!next[a.id]) next[a.id] = [];
-          }
-          return next;
-        });
       } else {
         setAgents(DEFAULT_AGENTS);
       }
@@ -182,6 +177,7 @@ function App() {
         setConnected(false);
         setProjects([]);
         setActiveProjectId(null);
+        setChatEntries([]);
         return;
       }
 
@@ -195,7 +191,7 @@ function App() {
 
       if (!res.ok) {
         const txt = await res.text();
-        throw new Error(`HTTP ${res.status}: ${txt}`);
+        throw new Error(`PROJECTS ${res.status}: ${txt}`);
       }
 
       const data = await res.json();
@@ -210,9 +206,57 @@ function App() {
     } catch (e) {
       setProjectsError(e?.message || String(e));
       setProjects([]);
+      setChatEntries([]);
     } finally {
       setProjectsLoading(false);
     }
+  }
+
+  async function loadProjectChat(projectId) {
+    if (!projectId) {
+      setChatEntries([]);
+      return;
+    }
+    if (connected === false) return;
+
+    setChatLoading(true);
+    setChatError("");
+
+    try {
+      const res = await fetch(`${API_BASE}/kb/projects/${encodeURIComponent(projectId)}/chat`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`CHAT GET ${res.status}: ${txt}`);
+      }
+
+      const data = await res.json();
+      setChatEntries(Array.isArray(data?.entries) ? data.entries : []);
+    } catch (e) {
+      setChatError(e?.message || String(e));
+      setChatEntries([]);
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function appendChat(projectId, payload) {
+    const res = await fetch(`${API_BASE}/kb/projects/${encodeURIComponent(projectId)}/chat/append`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`CHAT APPEND ${res.status}: ${txt}`);
+    }
+
+    return res.json();
   }
 
   async function createProject() {
@@ -287,23 +331,57 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAgentId]);
 
+  useEffect(() => {
+    // whenever project changes, reload project chat
+    if (!activeProjectId) {
+      setChatEntries([]);
+      return;
+    }
+    loadProjectChat(activeProjectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
   async function onSend() {
     const text = draft.trim();
     if (!text) return;
 
-    setDraft("");
-    pushMessage(activeAgentId, { role: "user", text });
+    if (!activeProjectId) {
+      setDraft("");
+      alert("Seleziona un progetto prima di inviare messaggi.");
+      return;
+    }
 
-    // Placeholder: in futuro collegheremo chat → orchestrator API
-    setTimeout(() => {
-      pushMessage(activeAgentId, {
-        role: "assistant",
-        text: `Ricevuto da ${activeAgent?.name}. Prossimo step: collego questa chat alla tua API (progetto: ${activeProjectId || "—"}).`,
-      });
-    }, 250);
+    setDraft("");
+
+    // Optimistic UI: append locally first
+    const nowIso = new Date().toISOString();
+    setChatEntries((prev) => [
+      ...(Array.isArray(prev) ? prev : []),
+      { ts: nowIso, projectId: activeProjectId, agentId: activeAgentId, role: "user", text },
+    ]);
+
+    try {
+      await appendChat(activeProjectId, { agentId: activeAgentId, role: "user", text });
+
+      // Minimal placeholder assistant response (also persisted) — until real orchestrator logic is wired
+      const assistantText = `Ricevuto da ${activeAgent?.name}. (Project: ${activeProjectId})`;
+      const now2 = new Date().toISOString();
+
+      setChatEntries((prev) => [
+        ...(Array.isArray(prev) ? prev : []),
+        { ts: now2, projectId: activeProjectId, agentId: activeAgentId, role: "assistant", text: assistantText },
+      ]);
+
+      await appendChat(activeProjectId, { agentId: activeAgentId, role: "assistant", text: assistantText });
+    } catch (e) {
+      setChatError(e?.message || String(e));
+      // Reload from server to reconcile
+      await loadProjectChat(activeProjectId);
+    }
   }
 
-  const agentProfileName = agentProfile?.parsed?.name || agentProfile?.agent?.name || activeAgent?.name || "—";
+  const agentProfileName =
+    agentProfile?.parsed?.name || agentProfile?.agent?.name || activeAgent?.name || "—";
   const agentProfileRole = agentProfile?.parsed?.role || "—";
 
   return (
@@ -496,19 +574,35 @@ function App() {
             </div>
           </div>
 
+          {chatError ? (
+            <div style={{ ...styles.errorBox, borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore Chat</div>
+              <div style={{ fontSize: 12, opacity: 0.85 }}>{chatError}</div>
+              <button
+                onClick={() => loadProjectChat(activeProjectId)}
+                style={{ ...styles.smallBtn, marginTop: 10 }}
+                disabled={!activeProjectId || chatLoading}
+              >
+                {chatLoading ? "…" : "Ricarica chat"}
+              </button>
+            </div>
+          ) : null}
+
           <div style={styles.chat}>
-            {activeMessages.length === 0 ? (
+            {chatLoading ? (
+              <div style={styles.muted}>Caricamento chat…</div>
+            ) : activeMessages.length === 0 ? (
               <div style={styles.empty}>Nessun messaggio ancora.</div>
             ) : (
               activeMessages.map((m, idx) => (
                 <div
-                  key={idx}
+                  key={`${m.ts || idx}-${idx}`}
                   style={{
                     ...styles.msg,
                     ...(m.role === "user" ? styles.msgUser : styles.msgAssistant),
                   }}
                 >
-                  <div style={styles.msgRole}>{m.role.toUpperCase()}</div>
+                  <div style={styles.msgRole}>{String(m.role || "").toUpperCase()}</div>
                   <div style={styles.msgText}>{m.text}</div>
                 </div>
               ))
@@ -524,8 +618,14 @@ function App() {
               }}
               placeholder="Scrivi qui e premi Invio…"
               style={styles.input}
+              disabled={!activeProjectId || connected === false}
+              title={!activeProjectId ? "Seleziona un progetto" : undefined}
             />
-            <button onClick={onSend} style={styles.sendBtn}>
+            <button
+              onClick={onSend}
+              style={styles.sendBtn}
+              disabled={!draft.trim() || !activeProjectId || connected === false}
+            >
               Send
             </button>
           </div>
@@ -713,4 +813,3 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
-
