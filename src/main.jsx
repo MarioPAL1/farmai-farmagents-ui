@@ -1,11 +1,17 @@
 import React, { useMemo, useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 
+/**
+ * FarmaAI UI (single-file entry)
+ * - Uses /run as the single source of truth for chat (no direct /chat/append from UI)
+ * - Shows run_id on assistant messages when available
+ */
+
 const DEFAULT_AGENTS = [
   { id: "orchestrator", name: "Orchestrator" },
-  { id: "pm", name: "PM / Planner" },
-  { id: "dev", name: "Developer" },
-  { id: "qa", name: "QA / Reviewer" },
+  { id: "pm-planner", name: "PM Planner" },
+  { id: "developer", name: "Developer" },
+  { id: "qa-reviewer", name: "QA Reviewer" },
   { id: "devops", name: "DevOps" },
 ];
 
@@ -243,23 +249,6 @@ function App() {
     } finally {
       setChatLoading(false);
     }
-  }
-
-  // Legacy (kept for later tooling); main chat should use /run.
-  async function appendChat(projectId, payload) {
-    const res = await fetch(`${API_BASE}/kb/projects/${encodeURIComponent(projectId)}/chat/append`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`CHAT APPEND ${res.status}: ${txt}`);
-    }
-
-    return res.json();
   }
 
   async function runAgent(projectId, agentId, message) {
@@ -603,6 +592,14 @@ function App() {
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
             <div style={styles.chatHeaderHint}>
               Project: {activeProjectId || "—"} • Role: {agentProfileRole}
+              <button
+                onClick={() => loadProjectChat(activeProjectId)}
+                style={{ ...styles.smallBtn, marginLeft: 10, padding: "6px 10px" }}
+                disabled={!activeProjectId || chatLoading}
+                title="Ricarica chat"
+              >
+                {chatLoading ? "…" : "↻ Chat"}
+              </button>
             </div>
           </div>
 
@@ -610,13 +607,6 @@ function App() {
             <div style={{ ...styles.errorBox, borderRadius: 0, borderLeft: "none", borderRight: "none" }}>
               <div style={{ fontWeight: 800, marginBottom: 6 }}>Errore Chat</div>
               <div style={{ fontSize: 12, opacity: 0.85 }}>{chatError}</div>
-              <button
-                onClick={() => loadProjectChat(activeProjectId)}
-                style={{ ...styles.smallBtn, marginTop: 10 }}
-                disabled={!activeProjectId || chatLoading}
-              >
-                {chatLoading ? "…" : "Ricarica chat"}
-              </button>
             </div>
           ) : null}
 
@@ -634,7 +624,10 @@ function App() {
                     ...(m.role === "user" ? styles.msgUser : styles.msgAssistant),
                   }}
                 >
-                  <div style={styles.msgRole}>{String(m.role || "").toUpperCase()}</div>
+                  <div style={styles.msgRole}>
+                    {String(m.role || "").toUpperCase()}
+                    {m.run_id ? <span style={styles.runHint}> • run: {m.run_id}</span> : null}
+                  </div>
                   <div style={styles.msgText}>{m.text}</div>
                 </div>
               ))
@@ -792,7 +785,7 @@ const styles = {
     alignItems: "baseline",
     background: "#fff",
   },
-  chatHeaderHint: { fontSize: 12, opacity: 0.6 },
+  chatHeaderHint: { fontSize: 12, opacity: 0.6, display: "flex", alignItems: "center" },
   chat: {
     padding: 14,
     display: "flex",
@@ -812,6 +805,7 @@ const styles = {
   msgUser: { alignSelf: "flex-end", background: "#f9fafb" },
   msgAssistant: { alignSelf: "flex-start", background: "#fff" },
   msgRole: { fontSize: 11, fontWeight: 900, opacity: 0.55, marginBottom: 6 },
+  runHint: { fontWeight: 800, opacity: 0.75 },
   msgText: { fontSize: 14, lineHeight: 1.35 },
   composer: {
     borderTop: "1px solid #e5e7eb",
