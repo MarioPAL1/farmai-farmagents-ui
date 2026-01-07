@@ -31,6 +31,7 @@ function toUiMessages(entries, agentId) {
       role: String(e?.role || "assistant"),
       text: String(e?.text || ""),
       ts: e?.ts || null,
+      run_id: e?.run_id || null,
     }));
 }
 
@@ -68,6 +69,7 @@ function App() {
   const [chatEntries, setChatEntries] = useState([]); // all messages for project (all agents)
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [runLoading, setRunLoading] = useState(false);
 
   const activeAgent = useMemo(
     () => agents.find((a) => a.id === activeAgentId) || agents[0],
@@ -243,6 +245,7 @@ function App() {
     }
   }
 
+  // Legacy (kept for later tooling); main chat should use /run.
   async function appendChat(projectId, payload) {
     const res = await fetch(`${API_BASE}/kb/projects/${encodeURIComponent(projectId)}/chat/append`, {
       method: "POST",
@@ -254,6 +257,22 @@ function App() {
     if (!res.ok) {
       const txt = await res.text();
       throw new Error(`CHAT APPEND ${res.status}: ${txt}`);
+    }
+
+    return res.json();
+  }
+
+  async function runAgent(projectId, agentId, message) {
+    const res = await fetch(`${API_BASE}/kb/projects/${encodeURIComponent(projectId)}/run`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, message }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`RUN ${res.status}: ${txt}`);
     }
 
     return res.json();
@@ -351,32 +370,45 @@ function App() {
       return;
     }
 
+    setChatError("");
     setDraft("");
 
-    // Optimistic UI: append locally first
+    // Optimistic UI: show user message immediately
     const nowIso = new Date().toISOString();
     setChatEntries((prev) => [
       ...(Array.isArray(prev) ? prev : []),
       { ts: nowIso, projectId: activeProjectId, agentId: activeAgentId, role: "user", text },
     ]);
 
-    try {
-      await appendChat(activeProjectId, { agentId: activeAgentId, role: "user", text });
+    setRunLoading(true);
 
-      // Minimal placeholder assistant response (also persisted) — until real orchestrator logic is wired
-      const assistantText = `Ricevuto da ${activeAgent?.name}. (Project: ${activeProjectId})`;
+    try {
+      const data = await runAgent(activeProjectId, activeAgentId, text);
+
+      const assistantText = data?.output?.content || "✅ Run completed.";
       const now2 = new Date().toISOString();
 
+      // Show assistant message immediately
       setChatEntries((prev) => [
         ...(Array.isArray(prev) ? prev : []),
-        { ts: now2, projectId: activeProjectId, agentId: activeAgentId, role: "assistant", text: assistantText },
+        {
+          ts: now2,
+          projectId: activeProjectId,
+          agentId: activeAgentId,
+          role: "assistant",
+          text: assistantText,
+          run_id: data?.run_id || null,
+        },
       ]);
 
-      await appendChat(activeProjectId, { agentId: activeAgentId, role: "assistant", text: assistantText });
+      // Reconcile with server truth (chat.jsonl)
+      await loadProjectChat(activeProjectId);
     } catch (e) {
       setChatError(e?.message || String(e));
       // Reload from server to reconcile
       await loadProjectChat(activeProjectId);
+    } finally {
+      setRunLoading(false);
     }
   }
 
@@ -614,19 +646,19 @@ function App() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") onSend();
+                if (e.key === "Enter" && !e.shiftKey) onSend();
               }}
-              placeholder="Scrivi qui e premi Invio…"
+              placeholder={runLoading ? "Running…" : "Scrivi qui e premi Invio…"}
               style={styles.input}
-              disabled={!activeProjectId || connected === false}
+              disabled={!activeProjectId || connected === false || runLoading}
               title={!activeProjectId ? "Seleziona un progetto" : undefined}
             />
             <button
               onClick={onSend}
               style={styles.sendBtn}
-              disabled={!draft.trim() || !activeProjectId || connected === false}
+              disabled={!draft.trim() || !activeProjectId || connected === false || runLoading}
             >
-              Send
+              {runLoading ? "…" : "Send"}
             </button>
           </div>
         </main>
