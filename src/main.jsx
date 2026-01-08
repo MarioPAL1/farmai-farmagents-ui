@@ -76,6 +76,7 @@ function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const [runLoading, setRunLoading] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
 
   const activeAgent = useMemo(
     () => agents.find((a) => a.id === activeAgentId) || agents[0],
@@ -592,6 +593,22 @@ function App() {
             <div style={{ fontWeight: 700 }}>{activeAgent?.name}</div>
             <div style={styles.chatHeaderHint}>
               Project: {activeProjectId || "—"} • Role: {agentProfileRole}
+              {lastRun?.run_id ? (
+                <span style={styles.runPill}>
+                  • last run: {lastRun.run_id} ({lastRun.status || "—"})
+                  {activeProjectId ? (
+                    <a
+                      href={`${API_BASE}/kb/projects/${activeProjectId}/runs/${encodeURIComponent(lastRun.run_id)}/output`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={styles.runLink}
+                      title="Apri output.json"
+                    >
+                      output.json
+                    </a>
+                  ) : null}
+                </span>
+              ) : null}
               <button
                 onClick={() => loadProjectChat(activeProjectId)}
                 style={{ ...styles.smallBtn, marginLeft: 10, padding: "6px 10px" }}
@@ -626,7 +643,22 @@ function App() {
                 >
                   <div style={styles.msgRole}>
                     {String(m.role || "").toUpperCase()}
-                    {m.run_id ? <span style={styles.runHint}> • run: {m.run_id}</span> : null}
+                    {m.run_id ? (
+                      <span style={styles.runHint}>
+                        • run: {m.run_id}
+                        {activeProjectId ? (
+                          <a
+                            href={`${API_BASE}/kb/projects/${activeProjectId}/runs/${encodeURIComponent(m.run_id)}/output`}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={styles.runLinkInline}
+                            title="Apri output.json"
+                          >
+                            output.json
+                          </a>
+                        ) : null}
+                      </span>
+                    ) : null}
                   </div>
                   <div style={styles.msgText}>{m.text}</div>
                 </div>
@@ -806,6 +838,9 @@ const styles = {
   msgAssistant: { alignSelf: "flex-start", background: "#fff" },
   msgRole: { fontSize: 11, fontWeight: 900, opacity: 0.55, marginBottom: 6 },
   runHint: { fontWeight: 800, opacity: 0.75 },
+  runPill: { marginLeft: 10, fontSize: 12, opacity: 0.85 },
+  runLink: { marginLeft: 10, fontSize: 12, textDecoration: "underline", color: "#111" },
+  runLinkInline: { marginLeft: 10, fontSize: 12, textDecoration: "underline", color: "#111" },
   msgText: { fontSize: 14, lineHeight: 1.35 },
   composer: {
     borderTop: "1px solid #e5e7eb",
